@@ -4,6 +4,7 @@ const URL = require("url");
 const aws = require("aws-sdk");
 const log = require("debug")("image-proxy");
 
+const PORT = process.env.PORT || 16101;
 const S3_PATH_WATERMARK = process.env.S3_PATH_WATERMARK;
 const S3_PREFIX_PROXIED = process.env.S3_PREFIX_PROXIED;
 
@@ -231,6 +232,6 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(16101, "0.0.0.0", () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.info("server started!");
 });

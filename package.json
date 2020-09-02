@@ -6,7 +6,8 @@
   "author": "PhucPNT <pn.truongphuc@gmail.com>",
   "license": "Apache2.0",
   "scripts": {
-    "dev": "nodemon -r dotenv/config index.js"
+    "dev": "nodemon -r dotenv/config index.js",
+    "start": "node index.js"
   },
   "dependencies": {
     "aws-sdk": "^2.743.0",

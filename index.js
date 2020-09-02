@@ -5,7 +5,6 @@ const aws = require("aws-sdk");
 const log = require("debug")("image-proxy");
 
 const S3_PATH_WATERMARK = process.env.S3_PATH_WATERMARK;
-const S3_PREFIX_ORIGIN = process.env.S3_PREFIX_ORIGIN;
 const S3_PREFIX_PROXIED = process.env.S3_PREFIX_PROXIED;
 
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;

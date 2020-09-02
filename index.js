@@ -22,44 +22,37 @@ const s3 = new aws.S3({
 });
 
 let wmbuff = null;
-getImage(S3_PATH_WATERMARK).then((result) => {
-  const { buffer } = result;
-
-  sharp(buffer)
-    .composite([
-      {
-        input: Buffer.from([255, 255, 255, 75]),
-        raw: {
-          width: 1,
-          height: 1,
-          channels: 4,
+let chunks = [];
+getImage(S3_PATH_WATERMARK)
+  .createReadStream()
+  .on("data", (chunk) => {
+    chunks.push(chunk);
+  })
+  .on("end", () => {
+    const buffer = Buffer.concat(chunks);
+    sharp(buffer)
+      .composite([
+        {
+          input: Buffer.from([255, 255, 255, 75]),
+          raw: {
+            width: 1,
+            height: 1,
+            channels: 4,
+          },
+          tile: true,
+          blend: "dest-in",
         },
-        tile: true,
-        blend: "dest-in",
-      },
-    ])
-    .toBuffer()
-    .then((buff) => {
-      wmbuff = buff;
-    });
-});
+      ])
+      .toBuffer()
+      .then((buff) => {
+        wmbuff = buff;
+      });
+  });
 
 function getImage(urn) {
-  return new Promise((resolve, reject) => {
-    s3.getObject(
-      {
-        Bucket: S3_BUCKET_NAME,
-        Key: urn,
-      },
-      (err, data) => {
-        if (!err) {
-          const meta = data.Metadata;
-          resolve({ meta, buffer: data.Body });
-        } else {
-          reject(err);
-        }
-      }
-    );
+  return s3.getObject({
+    Bucket: S3_BUCKET_NAME,
+    Key: urn,
   });
 }
 
@@ -70,7 +63,53 @@ function putImage(urn, imgbuff, meta) {
         Bucket: S3_BUCKET_NAME,
         Key: urn,
         Body: imgbuff,
-        Metadata: meta,
+        Tagging: meta.Tagging,
+        Metadata: meta.Metadata,
+      },
+      (err, data) => {
+        resolve(data);
+      }
+    );
+  });
+}
+
+function getImageTag(urn) {
+  return new Promise((resolve) => {
+    s3.getObjectTagging(
+      {
+        Bucket: S3_BUCKET_NAME,
+        Key: urn,
+      },
+      (err, result) => {
+        resolve(result);
+      }
+    );
+  });
+}
+
+function getImageMetadata(urn) {
+  return new Promise((resolve) => {
+    s3.headObject(
+      {
+        Bucket: S3_BUCKET_NAME,
+        Key: urn,
+      },
+      (err, result) => {
+        resolve(result);
+      }
+    );
+  });
+}
+
+function putImageTag(urn, tagSet = []) {
+  return new Promise((resolve) => {
+    s3.putObjectTagging(
+      {
+        Bucket: S3_BUCKET_NAME,
+        Key: urn,
+        Tagging: {
+          TagSet: tagSet,
+        },
       },
       (err, data) => {
         resolve(data);
@@ -95,6 +134,49 @@ const server = http.createServer((req, res) => {
   const url = URL.parse(req.url);
   const imgPath = String(url.path).replace(/^\//i, ""); // assume imgPath same as s3 path
 
+  getImageTag(imgPath).then((tagging) => {
+    console.info("tagging", tagging);
+    if (tagging === null) {
+      console.error("file not found", imgPath);
+      res.writeHead(404, "file not found!");
+      res.end();
+      return;
+    }
+    const imgProxyKV = tagging.TagSet.find((i) => i.Key === "image-proxy-urn");
+    if (imgProxyKV) {
+      console.info('proccessed image...', imgProxyKV);
+      getImage(imgProxyKV.Value)
+        .createReadStream()
+        .pipe(res);
+    } else {
+      let chunks = [];
+      getImage(imgPath)
+        .createReadStream()
+        .on("data", (chunk) => {
+          chunks.push(chunk);
+        })
+        .on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          const processedPath = [S3_PREFIX_PROXIED, imgPath].join("/");
+          applyWatermark(buffer, wmbuff).then((buffer) => {
+            putImage(processedPath, buffer, {
+              Tagging: `origin-urn=${encodeURIComponent(imgPath)}`,
+            }).then(() => {
+              putImageTag(imgPath, [
+                {
+                  Key: "image-proxy-urn",
+                  Value: processedPath,
+                },
+              ]);
+              res.write(buffer);
+              res.end();
+            });
+          });
+        });
+    }
+  });
+
+  return;
   getImage(imgPath)
     .then((result) => {
       const { meta, buffer } = result;

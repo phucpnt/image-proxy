@@ -8,5 +8,6 @@ RUN yarn install --production
 
 ENV NODE_ENV=production
 ENV PORT=16101
+ENV DEBUG=image-proxy*
 EXPOSE 16101
 ENTRYPOINT [ "yarn", "run", "start"]

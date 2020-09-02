@@ -2,6 +2,7 @@ const http = require("http");
 const sharp = require("sharp");
 const URL = require("url");
 const aws = require("aws-sdk");
+const log = require("debug")("image-proxy");
 
 const S3_PATH_WATERMARK = process.env.S3_PATH_WATERMARK;
 const S3_PREFIX_ORIGIN = process.env.S3_PREFIX_ORIGIN;
@@ -22,6 +23,7 @@ const s3 = new aws.S3({
 });
 
 let wmbuff = null;
+let wmInfo = null;
 let chunks = [];
 getImage(S3_PATH_WATERMARK)
   .createReadStream()
@@ -33,7 +35,7 @@ getImage(S3_PATH_WATERMARK)
     sharp(buffer)
       .composite([
         {
-          input: Buffer.from([255, 255, 255, 75]),
+          input: Buffer.from([255, 255, 255, 220]),
           raw: {
             width: 1,
             height: 1,
@@ -43,9 +45,10 @@ getImage(S3_PATH_WATERMARK)
           blend: "dest-in",
         },
       ])
-      .toBuffer()
-      .then((buff) => {
+      .toBuffer({ resolveWithObject: true })
+      .then(({ info, data: buff }) => {
         wmbuff = buff;
+        wmInfo = info;
       });
   });
 
@@ -56,15 +59,14 @@ function getImage(urn) {
   });
 }
 
-function putImage(urn, imgbuff, meta) {
+function putImage(urn, imgbuff, config) {
   return new Promise((resolve) => {
     s3.upload(
       {
         Bucket: S3_BUCKET_NAME,
         Key: urn,
         Body: imgbuff,
-        Tagging: meta.Tagging,
-        Metadata: meta.Metadata,
+        ...config,
       },
       (err, data) => {
         resolve(data);
@@ -120,14 +122,41 @@ function putImageTag(urn, tagSet = []) {
 
 function applyWatermark(imgbuff, wmbuff) {
   return sharp(imgbuff)
-    .composite([
-      {
-        input: wmbuff,
-        blend: "overlay",
-        gravity: "center",
-      },
-    ])
-    .toBuffer();
+    .metadata()
+    .then((meta) => {
+      const { width, height } = meta;
+      let ratio = Math.min(
+        1,
+        width / (3 * wmInfo.width),
+        height / (3 * wmInfo.height)
+      );
+
+      return sharp(wmbuff)
+        .resize({
+          width: Math.floor(ratio * wmInfo.width),
+          height: Math.floor(ratio * wmInfo.height),
+        })
+        .toBuffer()
+        .then((wmbuff) => {
+          const pos = Math.floor(Math.random() * 4);
+          return sharp(imgbuff)
+            .composite([
+              {
+                input: wmbuff,
+                blend: "overlay",
+                gravity: "center",
+              },
+              {
+                input: wmbuff,
+                blend: "overlay",
+                gravity: ["northeast", "northwest", "southeast", "southwest"][
+                  pos
+                ],
+              },
+            ])
+            .toBuffer({ resolveWithObject: true });
+        });
+    });
 }
 
 const server = http.createServer((req, res) => {
@@ -135,19 +164,38 @@ const server = http.createServer((req, res) => {
   const imgPath = String(url.path).replace(/^\//i, ""); // assume imgPath same as s3 path
 
   getImageTag(imgPath).then((tagging) => {
-    console.info("tagging", tagging);
     if (tagging === null) {
       console.error("file not found", imgPath);
       res.writeHead(404, "file not found!");
       res.end();
       return;
     }
+
     const imgProxyKV = tagging.TagSet.find((i) => i.Key === "image-proxy-urn");
     if (imgProxyKV) {
-      console.info('proccessed image...', imgProxyKV);
-      getImage(imgProxyKV.Value)
-        .createReadStream()
-        .pipe(res);
+      getImageMetadata(imgProxyKV.Value).then((result) => {
+        if(req.headers["if-none-match"] === result.ETag || req.headers['if-match'] === result.ETag){
+          res.writeHead(304);
+          res.end();
+          return;
+        }
+        const headers = {
+          ETag: result.ETag,
+          "Content-Type": result.ContentType,
+          "Last-Modified": result.LastModified,
+          "Content-Length": result.ContentLength,
+        };
+        if (result.Expires) {
+          headers.Expires = result.Expires;
+        }
+        if (result.CacheControl) {
+          headers["Cache-Control"] = result.CacheControl;
+        }
+        res.writeHead(200, headers);
+        getImage(imgProxyKV.Value)
+          .createReadStream()
+          .pipe(res);
+      });
     } else {
       let chunks = [];
       getImage(imgPath)
@@ -158,16 +206,23 @@ const server = http.createServer((req, res) => {
         .on("end", () => {
           const buffer = Buffer.concat(chunks);
           const processedPath = [S3_PREFIX_PROXIED, imgPath].join("/");
-          applyWatermark(buffer, wmbuff).then((buffer) => {
+          log("start watermarking");
+          applyWatermark(buffer, wmbuff).then(({ data: buffer, info }) => {
+            log("end watermarking");
             putImage(processedPath, buffer, {
               Tagging: `origin-urn=${encodeURIComponent(imgPath)}`,
-            }).then(() => {
+              ContentType: `image/${info.format}`,
+              ContentLength: info.size,
+            }).then((result) => {
               putImageTag(imgPath, [
                 {
                   Key: "image-proxy-urn",
                   Value: processedPath,
                 },
               ]);
+              res.writeHead(200, {
+                ETag: result.ETag,
+              })
               res.write(buffer);
               res.end();
             });
@@ -175,28 +230,6 @@ const server = http.createServer((req, res) => {
         });
     }
   });
-
-  return;
-  getImage(imgPath)
-    .then((result) => {
-      const { meta, buffer } = result;
-      if (meta["x-amz-meta-imgproxy-urn"]) {
-        processedImage = meta["x-amz-meta-imgproxy-urn"];
-        getImage(processedImage).then((result) => {
-          res.write(result.buffer);
-          res.end();
-        });
-      } else {
-        applyWatermark(buffer, wmbuff).then((buffer) => {
-          res.write(buffer);
-          res.end();
-        });
-      }
-    })
-    .catch((err) => {
-      console.error("error with image path >", imgPath);
-      console.error(err);
-    });
 });
 
 server.listen(16101, "0.0.0.0", () => {

@@ -41,7 +41,8 @@ jobs:
             docker-compose --file docker-compose.test.yml build
             docker-compose --file docker-compose.test.yml run sut
           else
-            docker build . --file Dockerfile
+            # docker build . --file Dockerfile
+            echo "no test available"
           fi
   # Push image to GitHub Packages.
   # See also https://docs.docker.com/docker-hub/builds/

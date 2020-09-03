@@ -1,6 +1,15 @@
 name: Docker
 
 on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'     
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Test scenario tags'  
+
   push:
     # Publish `$default-branch` as Docker `latest` image.
     branches:

@@ -173,8 +173,18 @@ const server = http.createServer((req, res) => {
 
     const imgProxyKV = tagging.TagSet.find((i) => i.Key === "image-proxy-urn");
     if (imgProxyKV) {
+      log("found kv", imgProxyKV);
       getImageMetadata(imgProxyKV.Value).then((result) => {
-        if(req.headers["if-none-match"] === result.ETag || req.headers['if-match'] === result.ETag){
+        log("image etag", result.ETag);
+        log(
+          "request header",
+          req.headers["if-none-match"],
+          req.headers["if-match"]
+        );
+        if (
+          req.headers["if-none-match"] === result.ETag ||
+          req.headers["if-match"] === result.ETag
+        ) {
           res.writeHead(304);
           res.end();
           return;
@@ -222,7 +232,7 @@ const server = http.createServer((req, res) => {
               ]);
               res.writeHead(200, {
                 ETag: result.ETag,
-              })
+              });
               res.write(buffer);
               res.end();
             });

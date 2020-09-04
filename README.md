@@ -16,8 +16,9 @@ would be work correctly on AWS S3.
   S3_PATH_WATERMARK="location when you store the watermark image. Support file format: .png, jpeg, .svg etc..."
   S3_PREFIX_PROXIED="the prefix location after image has been applying watermark. Eg. /_imgproxy/your/origin/image/path"
   S3_ENDPOINT="s3 endpoint"
-  S3_REGION="s3 region id";
-  S3_BUCKET_ACCESSKEY="s3 bucket accesskey";
-  S3_BUCKET_SECRETKEY="s3 bucket secretkey";
+  S3_REGION="s3 region id"
+  S3_BUCKET_ACCESSKEY="s3 bucket accesskey"
+  S3_BUCKET_SECRETKEY="s3 bucket secretkey"
   ```
 
+* To use inside `docker-compose.yml` please take a look at this [example](./docker-compose.yml)

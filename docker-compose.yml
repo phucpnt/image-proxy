@@ -1,0 +1,17 @@
+# example for usage with  docker compose file
+version: "3"
+
+services:
+  imgproxy:
+    image: ghcr.io/phucpnt/image-proxy:master
+    environment:
+      - S3_BUCKET_NAME="s3 bucket name"
+      - S3_PATH_WATERMARK="location when you store the watermark image. Support file format in .png, jpeg, .svg etc..."
+      - S3_PREFIX_PROXIED="the prefix location after image has been applying watermark. Eg. _imgproxy -> /_imgproxy/your/origin/image/path"
+      - S3_ENDPOINT="s3 endpoint"
+      - S3_REGION="s3 region id"
+      - S3_BUCKET_ACCESSKEY="s3 bucket accesskey"
+      - S3_BUCKET_SECRETKEY="s3 bucket secretkey"
+      - PORT = 8088
+    expose:
+      - "8088"

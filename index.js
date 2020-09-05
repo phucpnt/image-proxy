@@ -212,7 +212,7 @@ const server = http.createServer((req, res) => {
   const url = URL.parse(req.url);
   const imgPath = decodeURI(String(url.path).replace(/^\//i, "")); // assume imgPath same as s3 path
 
-  if (!/\.(jpg|jpeg|png|gif)$/.test(url)) {
+  if (!/\.(jpg|jpeg|png|gif)$/.test(url.href)) {
     forwardFileNotImage(imgPath, req, res);
     return;
   }

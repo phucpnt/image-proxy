@@ -75,8 +75,13 @@ function putImage(urn, imgbuff, config) {
   });
 }
 
-function getImageTag(urn) {
+function getImageTag(urn, timeout = 500) {
   return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      log("timeout get image tagging", urn);
+      resolve({TagSet: []});
+    }, timeout);
+
     s3.getObjectTagging(
       {
         Bucket: S3_BUCKET_NAME,
@@ -84,10 +89,10 @@ function getImageTag(urn) {
       },
       (err, result) => {
         console.info(err, result);
-        if(err){
+        if (err) {
           reject(err);
         } else {
-        resolve(result);
+          resolve(result);
         }
       }
     );
@@ -168,9 +173,9 @@ const server = http.createServer((req, res) => {
   const url = URL.parse(req.url);
   const imgPath = String(url.path).replace(/^\//i, ""); // assume imgPath same as s3 path
 
-  log('image tag', imgPath);
+  log("image tag", imgPath);
   getImageTag(imgPath).then((tagging) => {
-    log('image tag', imgPath);
+    log("image tag", imgPath);
     if (tagging === null) {
       console.error("file not found", imgPath);
       res.writeHead(404, "file not found!");
@@ -215,7 +220,7 @@ const server = http.createServer((req, res) => {
       });
     } else {
       let chunks = [];
-      log('read origin image', imgPath);
+      log("read origin image", imgPath);
       getImage(imgPath)
         .createReadStream()
         .on("data", (chunk) => {

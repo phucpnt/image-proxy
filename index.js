@@ -169,13 +169,56 @@ function applyWatermark(imgbuff, wmbuff) {
     });
 }
 
+function fromS3ObjectMetaToHeader(result) {
+  const headers = {
+    ETag: result.ETag,
+    "Content-Type": result.ContentType,
+    "Last-Modified": result.LastModified,
+    "Content-Length": result.ContentLength,
+  };
+  if (result.Expires) {
+    headers.Expires = result.Expires;
+  }
+  if (result.CacheControl) {
+    headers["Cache-Control"] = result.CacheControl;
+  }
+
+  return headers;
+}
+
+function forwardFileNotImage(filePath, req, res) {
+  return getImageMetadata(filePath).then((meta) => {
+    if (meta === null) {
+      res.writeHead(404, "not found!");
+      res.end();
+      return;
+    }
+    const headers = fromS3ObjectMetaToHeader(meta);
+    if (
+      headers.ETag === req.headers["if-none-match"] ||
+      headers.ETag === req.headers["if-match"]
+    ) {
+      res.writeHead(304, "not modified");
+      res.end();
+    } else {
+      getImage(filePath)
+        .createReadStream()
+        .pipe(res);
+    }
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = URL.parse(req.url);
-  const imgPath = String(url.path).replace(/^\//i, ""); // assume imgPath same as s3 path
+  const imgPath = decodeURI(String(url.path).replace(/^\//i, "")); // assume imgPath same as s3 path
+
+  if (!/\.(jpg|jpeg|png|gif)$/.test(url)) {
+    forwardFileNotImage(imgPath, req, res);
+    return;
+  }
 
   log("image tag", imgPath);
   getImageTag(imgPath).then((tagging) => {
-    log("image tag", imgPath);
     if (tagging === null) {
       console.error("file not found", imgPath);
       res.writeHead(404, "file not found!");
@@ -187,31 +230,14 @@ const server = http.createServer((req, res) => {
     if (imgProxyKV) {
       log("found kv", imgProxyKV);
       getImageMetadata(imgProxyKV.Value).then((result) => {
-        log("image etag", result.ETag);
-        log(
-          "request header",
-          req.headers["if-none-match"],
-          req.headers["if-match"]
-        );
+        const headers = fromS3ObjectMetaToHeader(result);
         if (
-          req.headers["if-none-match"] === result.ETag ||
-          req.headers["if-match"] === result.ETag
+          req.headers["if-none-match"] === headers.ETag ||
+          req.headers["if-match"] === headers.ETag
         ) {
           res.writeHead(304);
           res.end();
           return;
-        }
-        const headers = {
-          ETag: result.ETag,
-          "Content-Type": result.ContentType,
-          "Last-Modified": result.LastModified,
-          "Content-Length": result.ContentLength,
-        };
-        if (result.Expires) {
-          headers.Expires = result.Expires;
-        }
-        if (result.CacheControl) {
-          headers["Cache-Control"] = result.CacheControl;
         }
         res.writeHead(200, headers);
         getImage(imgProxyKV.Value)

@@ -35,7 +35,7 @@ getImage(S3_PATH_WATERMARK)
     sharp(buffer)
       .composite([
         {
-          input: Buffer.from([255, 255, 255, 220]),
+          input: Buffer.from([255, 255, 255, 125]),
           raw: {
             width: 1,
             height: 1,
@@ -79,7 +79,7 @@ function getImageTag(urn, timeout = 500) {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
       log("timeout get image tagging", urn);
-      resolve({TagSet: []});
+      resolve({ TagSet: [] });
     }, timeout);
 
     s3.getObjectTagging(
@@ -153,12 +153,12 @@ function applyWatermark(imgbuff, wmbuff) {
             .composite([
               {
                 input: wmbuff,
-                blend: "overlay",
+                blend: "over",
                 gravity: "center",
               },
               {
                 input: wmbuff,
-                blend: "overlay",
+                blend: "over",
                 gravity: ["northeast", "northwest", "southeast", "southwest"][
                   pos
                 ],

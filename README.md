@@ -9,7 +9,7 @@ would be work correctly on AWS S3.
 
 
 ## How to use this repo
-* There is a docker container hosted at: https://github.com/users/phucpnt/packages/container/image-proxy/30127
+* There is a docker container hosted at: https://github.com/users/phucpnt/packages/container/image-proxy
 * To run the docker container, you need to define the following environment variables:
   ```ini
   S3_BUCKET_NAME="s3 bucket name"

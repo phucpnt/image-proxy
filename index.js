@@ -13,6 +13,8 @@ const S3_ENDPOINT = process.env.S3_ENDPOINT;
 const S3_REGION = process.env.S3_REGION;
 const S3_BUCKET_ACCESSKEY = process.env.S3_BUCKET_ACCESSKEY;
 const S3_BUCKET_SECRETKEY = process.env.S3_BUCKET_SECRETKEY;
+const IMAGE_PROXY_VERSION = process.env.IMAGE_PROXY_VERSION || 1;
+const WM_OPACITY = process.env.WM_OPACITY || 107;
 
 const s3 = new aws.S3({
   s3BucketEndpoint: true,
@@ -35,7 +37,7 @@ getImage(S3_PATH_WATERMARK)
     sharp(buffer)
       .composite([
         {
-          input: Buffer.from([255, 255, 255, 125]),
+          input: Buffer.from([255, 255, 255, Number(WM_OPACITY)]),
           raw: {
             width: 1,
             height: 1,
@@ -75,7 +77,7 @@ function putImage(urn, imgbuff, config) {
   });
 }
 
-function getImageTag(urn, timeout = 500) {
+function getImageTag(urn, timeout = 1000) {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
       log("timeout get image tagging", urn);
@@ -208,6 +210,35 @@ function forwardFileNotImage(filePath, req, res) {
   });
 }
 
+class FileNotFoundError extends Error {
+  constructor(filePath) {
+    super(`file not found ${filePath}`);
+  }
+}
+
+function findCachedImage(imgPath) {
+  return getImageTag(imgPath).then((tagging) => {
+    if (tagging === null) {
+      throw new FileNotFoundError(imgPath);
+    } else {
+      const imgProxyUrn = tagging.TagSet.find(
+        (i) => i.Key === "image-proxy-urn"
+      );
+      const imgProxyVersion = tagging.TagSet.find(
+        (i) => i.Key === "image-proxy-version"
+      );
+      let versionKey = imgProxyVersion ? imgProxyVersion.Value : 1;
+      log('find cached image -> server version %s, cached version %s', IMAGE_PROXY_VERSION, versionKey);
+      log('find cached image -> cached urn', imgProxyUrn);
+      if (String(IMAGE_PROXY_VERSION) !== String(versionKey)) {
+        return null;
+      } else {
+        return imgProxyUrn ? imgProxyUrn.Value : null;
+      }
+    }
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = URL.parse(req.url);
   const imgPath = decodeURI(String(url.pathname).replace(/^\//i, "")); // assume imgPath same as s3 path
@@ -217,68 +248,66 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  log("image tag", imgPath);
-  getImageTag(imgPath).then((tagging) => {
-    if (tagging === null) {
-      console.error("file not found", imgPath);
+  findCachedImage(imgPath)
+    .then((cachedImagePath) => {
+      log('cachedImagePath', cachedImagePath);
+      if (cachedImagePath) {
+        getImageMetadata(cachedImagePath).then((result) => {
+          const headers = fromS3ObjectMetaToHeader(result);
+          if (
+            req.headers["if-none-match"] === headers.ETag ||
+            req.headers["if-match"] === headers.ETag
+          ) {
+            res.writeHead(304);
+            res.end();
+            return;
+          }
+          res.writeHead(200, headers);
+          getImage(cachedImagePath)
+            .createReadStream()
+            .pipe(res);
+        });
+      } else {
+        let chunks = [];
+        log("read origin image", imgPath);
+        getImage(imgPath)
+          .createReadStream()
+          .on("data", (chunk) => {
+            chunks.push(chunk);
+          })
+          .on("end", () => {
+            const buffer = Buffer.concat(chunks);
+            const processedPath = [S3_PREFIX_PROXIED, imgPath].join("/");
+            log("start watermarking");
+            applyWatermark(buffer, wmbuff).then(({ data: buffer, info }) => {
+              log("end watermarking");
+              putImage(processedPath, buffer, {
+                Tagging: `origin-urn=${encodeURIComponent(imgPath)}`,
+                ContentType: `image/${info.format}`,
+                ContentLength: info.size,
+              }).then((result) => {
+                putImageTag(imgPath, [
+                  {
+                    Key: "image-proxy-urn",
+                    Value: processedPath,
+                  },
+                ]);
+                res.writeHead(200, {
+                  ETag: result.ETag,
+                });
+                res.write(buffer);
+                res.end();
+              });
+            });
+          });
+      }
+    })
+    .catch((err) => {
+      console.error(err);
       res.writeHead(404, "file not found!");
       res.end();
       return;
-    }
-
-    const imgProxyKV = tagging.TagSet.find((i) => i.Key === "image-proxy-urn");
-    if (imgProxyKV) {
-      log("found kv", imgProxyKV);
-      getImageMetadata(imgProxyKV.Value).then((result) => {
-        const headers = fromS3ObjectMetaToHeader(result);
-        if (
-          req.headers["if-none-match"] === headers.ETag ||
-          req.headers["if-match"] === headers.ETag
-        ) {
-          res.writeHead(304);
-          res.end();
-          return;
-        }
-        res.writeHead(200, headers);
-        getImage(imgProxyKV.Value)
-          .createReadStream()
-          .pipe(res);
-      });
-    } else {
-      let chunks = [];
-      log("read origin image", imgPath);
-      getImage(imgPath)
-        .createReadStream()
-        .on("data", (chunk) => {
-          chunks.push(chunk);
-        })
-        .on("end", () => {
-          const buffer = Buffer.concat(chunks);
-          const processedPath = [S3_PREFIX_PROXIED, imgPath].join("/");
-          log("start watermarking");
-          applyWatermark(buffer, wmbuff).then(({ data: buffer, info }) => {
-            log("end watermarking");
-            putImage(processedPath, buffer, {
-              Tagging: `origin-urn=${encodeURIComponent(imgPath)}`,
-              ContentType: `image/${info.format}`,
-              ContentLength: info.size,
-            }).then((result) => {
-              putImageTag(imgPath, [
-                {
-                  Key: "image-proxy-urn",
-                  Value: processedPath,
-                },
-              ]);
-              res.writeHead(200, {
-                ETag: result.ETag,
-              });
-              res.write(buffer);
-              res.end();
-            });
-          });
-        });
-    }
-  });
+    });
 });
 
 server.listen(PORT, "0.0.0.0", () => {
